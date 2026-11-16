@@ -1,0 +1,167 @@
+name: Release (Windows exe + Android apk)
+
+# Push a tag like v0.1.0 to build and publish a release:
+#   git tag v0.1.0 && git push origin v0.1.0
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without v (example 0.1.0)"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
+  LLPLAYER_COMMIT: da101d87681bb4d1d87a59884bca95043dd1158b
+  YTDLP_VERSION: "2025.08.20"
+  VELOPACK_VERSION: "0.0.1251"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compute version
+        shell: pwsh
+        run: |
+          $v = "${{ env.VERSION }}".TrimStart('v')
+          "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Fetch FFmpeg DLLs (kept out of this repo, 139 MB)
+        shell: pwsh
+        run: |
+          git init llplayer-src
+          git -C llplayer-src remote add origin https://github.com/umlx5h/LLPlayer
+          git -C llplayer-src fetch --depth 1 origin ${{ env.LLPLAYER_COMMIT }}
+          git -C llplayer-src checkout FETCH_HEAD -- FFmpeg
+          Copy-Item llplayer-src\FFmpeg windows\FFmpeg -Recurse
+
+      - name: Publish app
+        shell: pwsh
+        run: |
+          dotnet publish windows\LLPlayer\LLPlayer.csproj -c Release -r win-x64 `
+            --self-contained true -p:PublishSingleFile=false -p:PublishReadyToRun=true `
+            -p:Version=$env:APP_VERSION -o publish
+
+      - name: Publish YoutubeDL plugin
+        shell: pwsh
+        run: |
+          dotnet publish windows\Plugins\YoutubeDL\YoutubeDL.csproj -c Release -p:PublishReadyToRun=false -o publish-ytdl
+          New-Item -ItemType Directory -Force publish\Plugins\YoutubeDL | Out-Null
+          Copy-Item publish-ytdl\YoutubeDL.dll publish\Plugins\YoutubeDL\
+          New-Item -Path publish\Plugins\YoutubeDL\yt-dlp.exe_here -ItemType File | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/download/${{ env.YTDLP_VERSION }}/yt-dlp.exe" -OutFile publish\Plugins\YoutubeDL\yt-dlp.exe
+
+      - name: Add FFmpeg and clean unused native runtimes
+        shell: pwsh
+        run: |
+          Copy-Item windows\FFmpeg publish\FFmpeg -Recurse
+          foreach ($p in @("runtimes\noavx\linux-x64","runtimes\noavx\win-x86","runtimes\openvino\linux-x64","runtimes\vulkan\linux-x64","runtimes\win-arm64","runtimes\win-x86","x86")) {
+            if (Test-Path "publish\$p") { Remove-Item -Recurse -Force "publish\$p" }
+          }
+
+      - name: Install vpk
+        shell: pwsh
+        run: dotnet tool install -g vpk --version ${{ env.VELOPACK_VERSION }}
+
+      - name: Download previous release (for delta updates)
+        shell: pwsh
+        continue-on-error: true
+        run: vpk download github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pack installer
+        shell: pwsh
+        run: |
+          vpk pack --packId DewPlayer --packVersion $env:APP_VERSION --packDir publish `
+            --mainExe DewPlayer.exe --packTitle "Dew Player" --icon windows\LLPlayer\LLPlayer.ico `
+            --framework vcredist143-x64 --outputDir Releases
+
+      - name: Upload to GitHub Release
+        shell: pwsh
+        run: |
+          vpk upload github --repoUrl https://github.com/${{ github.repository }} --token ${{ secrets.GITHUB_TOKEN }} `
+            --outputDir Releases --tag v$env:APP_VERSION --releaseName "Dew Player v$env:APP_VERSION" --publish
+
+  android:
+    runs-on: ubuntu-latest
+    needs: windows
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Compute version
+        run: |
+          V="${{ env.VERSION }}"; echo "APP_VERSION=${V#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Android project and patch manifest
+        working-directory: mobile
+        run: |
+          flutter create --org com.dewplayer --project-name dew_player --platforms android .
+          python3 - <<'PY'
+          import re
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p, encoding="utf-8").read()
+          perms = ('<uses-permission android:name="android.permission.INTERNET"/>\n'
+                   '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>\n'
+                   '    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n    ')
+          s = s.replace("<application", perms + "<application", 1)
+          s = re.sub(r'android:label="[^"]*"', 'android:label="Dew Player"', s, count=1)
+          s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
+          open(p, "w", encoding="utf-8").write(s)
+          PY
+
+      - name: Install dependencies and icons
+        working-directory: mobile
+        run: |
+          flutter pub get
+          dart run flutter_launcher_icons
+
+      - name: Build APKs (per CPU, small size)
+        working-directory: mobile
+        run: |
+          flutter build apk --release --split-per-abi --build-name "$APP_VERSION" --build-number "${{ github.run_number }}"
+
+      - name: Sign APKs (same key every release, so updates install over the old app)
+        run: |
+          KS="$GITHUB_WORKSPACE/mobile/signing/dew-release.jks"
+          PASS="dewplayer-pass"
+          ALIAS="dew"
+          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
+            KS="$RUNNER_TEMP/release.jks"; PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"; ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
+          fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          cd mobile/build/app/outputs/flutter-apk
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          for pair in "arm64-v8a:arm64" "armeabi-v7a:armv7"; do
+            abi="${pair%%:*}"; name="${pair##*:}"
+            "$BT/zipalign" -f -p 4 "app-$abi-release.apk" "aligned-$name.apk"
+            "$BT/apksigner" sign --ks "$KS" --ks-pass "pass:$PASS" --ks-key-alias "$ALIAS" --key-pass "pass:$PASS" \
+              --out "$GITHUB_WORKSPACE/out/DewPlayer-android-$name.apk" "aligned-$name.apk"
+          done
+          ls -la "$GITHUB_WORKSPACE/out"
+
+      - name: Add APKs to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ env.APP_VERSION }}
+          files: out/*.apk
