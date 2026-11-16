@@ -127,6 +127,16 @@ jobs:
           s = re.sub(r'android:label="[^"]*"', 'android:label="Dew Player"', s, count=1)
           s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
           open(p, "w", encoding="utf-8").write(s)
+
+          # ML Kit OCR: add the non-Latin script libraries (needed for release builds / R8 too)
+          import os
+          kts = os.path.exists("android/app/build.gradle.kts")
+          g = "android/app/build.gradle.kts" if kts else "android/app/build.gradle"
+          libs = ["chinese", "devanagari", "japanese", "korean"]
+          lines = [('implementation("com.google.mlkit:text-recognition-%s:16.0.1")' if kts
+                    else "implementation 'com.google.mlkit:text-recognition-%s:16.0.1'") % l for l in libs]
+          with open(g, "a", encoding="utf-8") as f:
+              f.write("\ndependencies {\n    " + "\n    ".join(lines) + "\n}\n")
           PY
 
       - name: Install dependencies and icons

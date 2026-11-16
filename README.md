@@ -23,7 +23,7 @@ Get the latest build from [Releases](https://github.com/nurulislamtask/Dew-Playe
 **Windows** (based on [LLPlayer](https://github.com/umlx5h/LLPlayer), new Dew theme and floating control bar): dual subtitles, AI subtitles (Whisper), real-time translation, OCR for bitmap subtitles, subtitle sidebar, word lookup, yt-dlp online video, subtitle downloader, custom shortcuts.
 
 **Android** (new Flutter app, hardware decoding through libmpv/media_kit, kept light): local files and network streams, dual subtitles (embedded track or .srt/.vtt/.ass file), automatic translation as a second subtitle line, tap a subtitle to look up words, subtitle list with tap-to-seek, double-tap seek, long-press 2x speed, swipe volume, speed control, recent list.
-Not in the mobile app yet: Whisper AI subtitles and OCR (too heavy for phones).
+**AI subtitles (Whisper, offline, on the phone)** and **OCR for picture/burned-in subtitles** (ML Kit) are included and optional: *Subtitles menu > AI tools*. AI uses CPU/battery only while it runs; the Whisper model (tiny 75 MB / base 142 MB / small 466 MB) is downloaded once on first use. Pick *tiny* or *base* on weaker phones.
 
 ## Releasing a new version
 

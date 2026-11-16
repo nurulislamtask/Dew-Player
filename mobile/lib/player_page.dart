@@ -5,7 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart' show TextRecognitionScript;
+import 'ai_subtitles.dart';
 import 'app_settings.dart';
+import 'ocr_service.dart';
 import 'subtitles.dart';
 import 'theme.dart';
 import 'translator.dart';
@@ -44,6 +47,15 @@ class _PlayerPageState extends State<PlayerPage> {
   bool translate = AppSettings.translateByDefault;
   int _reqId = 0;
 
+  // AI subtitles (Whisper) and OCR
+  final ai = AiSubtitleGenerator();
+  final ocr = OcrService();
+  final aiStatus = ValueNotifier<String>('');
+  String aiModel = 'tiny';
+  bool ocrOn = false;
+  String ocrText = '';
+  String ocrScriptName = OcrService.scripts.keys.first;
+
   @override
   void initState() {
     super.initState();
@@ -80,6 +92,8 @@ class _PlayerPageState extends State<PlayerPage> {
     for (final s in subs) {
       s.cancel();
     }
+    ai.cancel();
+    ocr.stop();
     player.dispose();
     WakelockPlus.disable();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -89,7 +103,7 @@ class _PlayerPageState extends State<PlayerPage> {
 
   // ---------- subtitles ----------
   void _tick(Duration d) {
-    final p = primaryExt.isNotEmpty ? lineAt(primaryExt, d) : embeddedText;
+    final p = ocrOn ? ocrText : (primaryExt.isNotEmpty ? lineAt(primaryExt, d) : embeddedText);
     if (p != primaryText.value) {
       primaryText.value = p;
       _updateSecondary(p);
@@ -195,6 +209,23 @@ class _PlayerPageState extends State<PlayerPage> {
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Text(v, style: const TextStyle(fontSize: 18)),
+                      ),
+                    ),
+            ),
+            ValueListenableBuilder<String>(
+              valueListenable: aiStatus,
+              builder: (_, v, __) => v.isEmpty
+                  ? const SizedBox.shrink()
+                  : Positioned(
+                      top: MediaQuery.of(context).padding.top + 56,
+                      left: 16,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: Colors.black54,
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: Text(v, style: const TextStyle(fontSize: 12, color: dewTeal)),
                       ),
                     ),
             ),
@@ -550,6 +581,38 @@ class _PlayerPageState extends State<PlayerPage> {
                     },
                   ),
                 const Divider(),
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                  child: Text('AI tools',
+                      style: TextStyle(fontWeight: FontWeight.w700, color: dewTeal)),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.auto_awesome_rounded),
+                  title: Text(ai.running ? 'Stop AI subtitles' : 'Generate AI subtitles (Whisper)'),
+                  subtitle: Text(ai.running
+                      ? 'Working in the background'
+                      : 'Works offline. Model downloads once. Starts from the current position.'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    ai.running ? ai.cancel() : _aiDialog();
+                  },
+                ),
+                SwitchListTile(
+                  secondary: const Icon(Icons.document_scanner_rounded),
+                  title: const Text('OCR subtitles'),
+                  subtitle: Text('Reads picture / burned-in subtitles ($ocrScriptName)'),
+                  value: ocrOn,
+                  onChanged: (v) {
+                    if (v) {
+                      Navigator.pop(ctx);
+                      _ocrDialog();
+                    } else {
+                      _setOcr(false);
+                      setS(() {});
+                    }
+                  },
+                ),
+                const Divider(),
                 ListTile(
                   title: const Text('Subtitle size'),
                   subtitle: Slider(
@@ -569,6 +632,122 @@ class _PlayerPageState extends State<PlayerPage> {
         );
       }),
     );
+  }
+
+  void _aiDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(builder: (ctx, setS) {
+        const models = {
+          'tiny': 'Tiny (~75 MB) - fastest, lower accuracy',
+          'base': 'Base (~142 MB) - balanced',
+          'small': 'Small (~466 MB) - best accuracy, slow on phones',
+        };
+        return AlertDialog(
+          title: const Text('AI subtitles (Whisper)'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final e in models.entries)
+                RadioListTile<String>(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(e.value),
+                  value: e.key,
+                  groupValue: aiModel,
+                  onChanged: (v) => setS(() => aiModel = v!),
+                ),
+              const SizedBox(height: 8),
+              const Text(
+                'Uses CPU and battery while running. Needs internet only to download the model the first time.',
+                style: TextStyle(fontSize: 12, color: Colors.white54),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _startAi();
+              },
+              child: const Text('Start'),
+            ),
+          ],
+        );
+      }),
+    );
+  }
+
+  void _startAi() {
+    primaryExt = [];
+    ocrOn = false;
+    ocr.stop();
+    player.setSubtitleTrack(SubtitleTrack.no());
+    final lines = <SubLine>[];
+    ai
+        .start(
+          source: widget.source,
+          from: pos.value,
+          model: aiModel,
+          onLines: (l) {
+            lines.addAll(l);
+            primaryExt = List.of(lines);
+            _tick(pos.value);
+          },
+          onStatus: (t) {
+            if (mounted) aiStatus.value = t;
+            if (t.contains('finished') || t.contains('stopped') || t.contains('failed')) {
+              Future.delayed(const Duration(seconds: 6), () {
+                if (mounted && !ai.running) aiStatus.value = '';
+              });
+            }
+          },
+        )
+        .catchError((e) {
+      if (mounted) aiStatus.value = 'AI subtitles failed: $e';
+    });
+  }
+
+  void _ocrDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('OCR language'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final name in OcrService.scripts.keys)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: Text(name),
+                onTap: () {
+                  ocrScriptName = name;
+                  Navigator.pop(ctx);
+                  _setOcr(true);
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _setOcr(bool on) {
+    setState(() => ocrOn = on);
+    if (on) {
+      ocr.start(player, OcrService.scripts[ocrScriptName]!, (text) {
+        ocrText = text;
+        _tick(pos.value);
+      });
+      _toast('OCR on');
+    } else {
+      ocr.stop();
+      ocrText = '';
+      _tick(pos.value);
+    }
   }
 
   void _sidebar() {
