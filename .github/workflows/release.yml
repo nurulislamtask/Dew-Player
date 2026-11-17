@@ -49,7 +49,7 @@ jobs:
         working-directory: app
         shell: pwsh
         run: |
-          flutter create --org com.dewplayer --project-name dew_player --platforms windows .
+          flutter create --org com.dewplayer --project-name dew_player --platforms android,windows .
           (Get-Content windows\runner\main.cpp) -replace 'L"dew_player"', 'L"Dew Player"' | Set-Content windows\runner\main.cpp
 
       - name: Install dependencies and icons
@@ -127,7 +127,7 @@ jobs:
       - name: Generate Android project and patch manifest
         working-directory: app
         run: |
-          flutter create --org com.dewplayer --project-name dew_player --platforms android .
+          flutter create --org com.dewplayer --project-name dew_player --platforms android,windows .
           python3 - <<'PY'
           import re, os
           p = "android/app/src/main/AndroidManifest.xml"
