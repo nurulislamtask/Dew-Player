@@ -66,13 +66,22 @@ jobs:
 
       - name: Add offline AI engine (whisper.cpp, small CPU build)
         shell: pwsh
-        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download --repo ggml-org/whisper.cpp --pattern "whisper-bin-x64.zip" --dir whisper-dl
-          Expand-Archive whisper-dl\whisper-bin-x64.zip -DestinationPath whisper-dl\x
+          $found = $null
+          $tags = gh release list --repo ggml-org/whisper.cpp --limit 25 --json tagName --jq '.[].tagName'
+          foreach ($t in $tags) {
+            $names = @(gh release view $t --repo ggml-org/whisper.cpp --json assets --jq '.assets[].name')
+            Write-Host "$t : $($names -join ', ')"
+            $hit = $names | Where-Object { $_ -match '^whisper-bin-x64\.zip$' } | Select-Object -First 1
+            if ($hit) { $found = @{ tag = $t; name = $hit }; break }
+          }
+          if (-not $found) { Write-Host "::warning::no whisper.cpp Windows binary found, AI subtitles will be unavailable on Windows"; exit 0 }
+          gh release download $found.tag --repo ggml-org/whisper.cpp --pattern $found.name --dir whisper-dl
+          Expand-Archive "whisper-dl\$($found.name)" -DestinationPath whisper-dl\x
           $cli = Get-ChildItem whisper-dl\x -Recurse -Filter whisper-cli.exe | Select-Object -First 1
+          if (-not $cli) { Write-Host "::warning::whisper-cli.exe not in the archive"; exit 0 }
           $dest = "app\build\windows\x64\runner\Release\whisper"
           New-Item -ItemType Directory -Force $dest | Out-Null
           Copy-Item "$($cli.Directory.FullName)\*" $dest -Recurse

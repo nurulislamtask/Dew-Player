@@ -207,11 +207,16 @@ class _PlayerPageState extends State<PlayerPage> {
   }
 
   void _maybeAutoSubs() {
-    if (!mounted || !AppSettings.autoSubs || ai.running) return;
-    if (lines.isNotEmpty) return;
-    final hasTrack = player.state.tracks.subtitle.any((t) => t.id != 'auto' && t.id != 'no');
-    if (hasTrack) return;
-    _startAi();
+    if (!mounted || ai.running || lines.isNotEmpty) return;
+    final tracks = player.state.tracks.subtitle
+        .where((t) => t.id != 'auto' && t.id != 'no')
+        .toList();
+    if (tracks.isNotEmpty) {
+      // the video has its own subtitles: make sure one is on
+      if (player.state.track.subtitle.id == 'no') player.setSubtitleTrack(tracks.first);
+      return;
+    }
+    if (AppSettings.autoSubs) _startAi();
   }
 
   // ---------- subtitles ----------
