@@ -21,7 +21,7 @@ dependencies:
   device_info_plus: ^10.1.2
   wakelock_plus: ^1.2.8
   photo_manager: ^3.6.0
-  screen_brightness: 1.0.1
+  screen_brightness: ^2.1.11
   window_manager: ^0.4.3
   whisper_flutter_new: ^1.0.1
 

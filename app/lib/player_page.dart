@@ -78,7 +78,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (Platform.isAndroid) {
       SystemChrome.setPreferredOrientations(DeviceOrientation.values);
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-      ScreenBrightness().current.then((v) => brightness = v).catchError((_) => 0.5);
+      ScreenBrightness.instance.application.then((v) => brightness = v).catchError((_) => 0.5);
     }
     WakelockPlus.enable();
 
@@ -136,7 +136,7 @@ class _PlayerPageState extends State<PlayerPage> {
     if (Platform.isAndroid) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       SystemChrome.setPreferredOrientations(DeviceOrientation.values);
-      ScreenBrightness().resetScreenBrightness().catchError((_) {});
+      ScreenBrightness.instance.resetApplicationScreenBrightness().catchError((_) {});
     }
     if (Platform.isWindows && fullscreen) windowManager.setFullScreen(false);
     super.dispose();
@@ -527,7 +527,7 @@ class _PlayerPageState extends State<PlayerPage> {
                   _toast('Volume ${volume.round()}%');
                 } else if (Platform.isAndroid) {
                   brightness = (brightness + delta).clamp(0.02, 1.0).toDouble();
-                  ScreenBrightness().setScreenBrightness(brightness).catchError((_) {});
+                  ScreenBrightness.instance.setApplicationScreenBrightness(brightness).catchError((_) {});
                   _toast('Brightness ${(brightness * 100).round()}%');
                 }
               },
