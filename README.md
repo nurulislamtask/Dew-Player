@@ -1,7 +1,7 @@
 <p align="center"><img height="96" src="./assets/icon.png"></p>
 
 <h1 align="center">Dew Player</h1>
-<p align="center">A modern, subtitle-first video player for <b>Windows</b> and <b>Android</b>.</p>
+<p align="center">A clean, smooth video player for <b>Android</b> and <b>Windows</b> with automatic subtitles in any language.</p>
 
 ## Downloads
 
@@ -9,30 +9,29 @@ Get the latest build from [Releases](https://github.com/nurulislamtask/Dew-Playe
 
 | Platform | File |
 |---|---|
-| Windows 10/11 (x64) | `DewPlayer-win-Setup.exe` (installer, auto-updates) |
+| Windows 10/11 (x64) | `DewPlayer-win-Setup.exe` (installer, auto-updates) or `DewPlayer-win-Portable.zip` |
 | Android (most phones) | `DewPlayer-android-arm64.apk` |
 | Android (old 32-bit phones) | `DewPlayer-android-armv7.apk` |
 
-## Auto update
-
-- **Windows:** installed with the Setup.exe, the app checks GitHub Releases in the background, downloads the update and asks to restart. Toggle in *Settings > About*.
-- **Android:** the app checks GitHub Releases when it opens, then downloads and installs the new APK. Toggle in *Settings*. Android will ask once to allow "install unknown apps".
-
 ## Features
 
-**Windows** (based on [LLPlayer](https://github.com/umlx5h/LLPlayer), new Dew theme and floating control bar): dual subtitles, AI subtitles (Whisper), real-time translation, OCR for bitmap subtitles, subtitle sidebar, word lookup, yt-dlp online video, subtitle downloader, custom shortcuts.
-
-**Android** (new Flutter app, hardware decoding through libmpv/media_kit, kept light): local files and network streams, dual subtitles (embedded track or .srt/.vtt/.ass file), automatic translation as a second subtitle line, tap a subtitle to look up words, subtitle list with tap-to-seek, double-tap seek, long-press 2x speed, swipe volume, speed control, recent list.
-**AI subtitles (Whisper, offline, on the phone)** and **OCR for picture/burned-in subtitles** (ML Kit) are included and optional: *Subtitles menu > AI tools*. AI uses CPU/battery only while it runs; the Whisper model (tiny 75 MB / base 142 MB / small 466 MB) is downloaded once on first use. Pick *tiny* or *base* on weaker phones.
+- Plays almost every video and audio format (libmpv / FFmpeg, hardware decoding)
+- Folder-wise video library (like MX Player), network streams (http, HLS, DASH, rtsp, rtmp)
+- Automatic subtitles: if a video has no subtitles, AI (Whisper, offline) creates them in the spoken language, then translates them to the language you choose (100+ languages)
+- Embedded tracks, external `.srt` / `.vtt` / `.ass` (also picked up automatically when next to the video)
+- Gestures: swipe for volume / brightness / seek, double tap to skip 10s, hold for 2x speed, lock screen
+- Resume where you stopped, audio track switch, speed, aspect ratio, rotation
+- Settings: theme (system / dark / light / AMOLED black), accent color, subtitle language and size, AI quality
+- Auto update from GitHub Releases
 
 ## Releasing a new version
 
 ```
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
-GitHub Actions builds everything and publishes the release. Versions must increase (v0.1.1, v0.2.0 ...) for auto update to trigger.
+GitHub Actions builds everything and publishes the release. Versions must increase for auto update to trigger.
 
 ### Optional: use your own Android signing key
 
@@ -40,10 +39,9 @@ The repo contains a ready-made key so the first build works. For better security
 
 ## Repo layout
 
-- `windows/` PC app (C#/WPF, .NET 10)
-- `mobile/` Android app (Flutter)
+- `app/` Flutter app (Android + Windows)
 - `.github/workflows/release.yml` build and release
 
 ## License
 
-GPL-3.0. The Windows app is a modified version of [LLPlayer](https://github.com/umlx5h/LLPlayer) by umlx5h (GPL-3.0); see `LICENSE`.
+GPL-3.0. See `LICENSE`.

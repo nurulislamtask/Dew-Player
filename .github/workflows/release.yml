@@ -1,7 +1,7 @@
 name: Release (Windows exe + Android apk)
 
-# Push a tag like v0.1.0 to build and publish a release:
-#   git tag v0.1.0 && git push origin v0.1.0
+# Push a tag like v0.2.0 to build and publish a release:
+#   git tag v0.2.0 && git push origin v0.2.0
 on:
   push:
     tags:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version without v (example 0.1.0)"
+        description: "Version without v (example 0.2.0)"
         required: true
       skip_windows:
         description: "Skip the Windows job (only rebuild Android APKs for an existing release)"
@@ -21,8 +21,6 @@ permissions:
 
 env:
   VERSION: ${{ github.event.inputs.version || github.ref_name }}
-  LLPLAYER_COMMIT: da101d87681bb4d1d87a59884bca95043dd1158b
-  YTDLP_VERSION: "2025.08.20"
   VELOPACK_VERSION: "0.0.1251"
 
 jobs:
@@ -38,42 +36,47 @@ jobs:
           $v = "${{ env.VERSION }}".TrimStart('v')
           "APP_VERSION=$v" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.x
 
-      - name: Fetch FFmpeg DLLs (kept out of this repo, 139 MB)
+      - name: Generate Windows project
+        working-directory: app
         shell: pwsh
         run: |
-          git init llplayer-src
-          git -C llplayer-src remote add origin https://github.com/umlx5h/LLPlayer
-          git -C llplayer-src fetch --depth 1 origin ${{ env.LLPLAYER_COMMIT }}
-          git -C llplayer-src checkout FETCH_HEAD -- FFmpeg
-          Copy-Item llplayer-src\FFmpeg windows\FFmpeg -Recurse
+          flutter create --org com.dewplayer --project-name dew_player --platforms windows .
+          (Get-Content windows\runner\main.cpp) -replace 'L"dew_player"', 'L"Dew Player"' | Set-Content windows\runner\main.cpp
 
-      - name: Publish app
+      - name: Install dependencies and icons
+        working-directory: app
         shell: pwsh
         run: |
-          dotnet publish windows\LLPlayer\LLPlayer.csproj -c Release -r win-x64 `
-            --self-contained true -p:PublishSingleFile=false -p:PublishReadyToRun=true `
-            -p:Version=$env:APP_VERSION -o publish
+          flutter pub get
+          dart run flutter_launcher_icons
 
-      - name: Publish YoutubeDL plugin
+      - name: Build Windows app
+        working-directory: app
         shell: pwsh
-        run: |
-          dotnet publish windows\Plugins\YoutubeDL\YoutubeDL.csproj -c Release -p:PublishReadyToRun=false -o publish-ytdl
-          New-Item -ItemType Directory -Force publish\Plugins\YoutubeDL | Out-Null
-          Copy-Item publish-ytdl\YoutubeDL.dll publish\Plugins\YoutubeDL\
-          New-Item -Path publish\Plugins\YoutubeDL\yt-dlp.exe_here -ItemType File | Out-Null
-          Invoke-WebRequest -Uri "https://github.com/yt-dlp/yt-dlp/releases/download/${{ env.YTDLP_VERSION }}/yt-dlp.exe" -OutFile publish\Plugins\YoutubeDL\yt-dlp.exe
+        run: flutter build windows --release --build-name $env:APP_VERSION --build-number ${{ github.run_number }}
 
-      - name: Add FFmpeg and clean unused native runtimes
+      - name: Add offline AI engine (whisper.cpp, small CPU build)
         shell: pwsh
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          Copy-Item windows\FFmpeg publish\FFmpeg -Recurse
-          foreach ($p in @("runtimes\noavx\linux-x64","runtimes\noavx\win-x86","runtimes\openvino\linux-x64","runtimes\vulkan\linux-x64","runtimes\win-arm64","runtimes\win-x86","x86")) {
-            if (Test-Path "publish\$p") { Remove-Item -Recurse -Force "publish\$p" }
-          }
+          gh release download --repo ggml-org/whisper.cpp --pattern "whisper-bin-x64.zip" --dir whisper-dl
+          Expand-Archive whisper-dl\whisper-bin-x64.zip -DestinationPath whisper-dl\x
+          $cli = Get-ChildItem whisper-dl\x -Recurse -Filter whisper-cli.exe | Select-Object -First 1
+          $dest = "app\build\windows\x64\runner\Release\whisper"
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          Copy-Item "$($cli.Directory.FullName)\*" $dest -Recurse
+          Get-ChildItem $dest | Select-Object Name, Length
 
       - name: Install vpk
         shell: pwsh
@@ -87,9 +90,12 @@ jobs:
       - name: Pack installer
         shell: pwsh
         run: |
-          vpk pack --packId DewPlayer --packVersion $env:APP_VERSION --packDir publish `
-            --mainExe DewPlayer.exe --packTitle "Dew Player" --icon windows\LLPlayer\LLPlayer.ico `
+          vpk pack --packId DewPlayer --packVersion $env:APP_VERSION `
+            --packDir app\build\windows\x64\runner\Release `
+            --mainExe dew_player.exe --packTitle "Dew Player" `
+            --icon app\windows\runner\resources\app_icon.ico `
             --framework vcredist143-x64 --outputDir Releases
+          Get-ChildItem Releases | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}}
 
       - name: Upload to GitHub Release
         shell: pwsh
@@ -119,32 +125,24 @@ jobs:
           cache: true
 
       - name: Generate Android project and patch manifest
-        working-directory: mobile
+        working-directory: app
         run: |
           flutter create --org com.dewplayer --project-name dew_player --platforms android .
           python3 - <<'PY'
-          import re
+          import re, os
           p = "android/app/src/main/AndroidManifest.xml"
           s = open(p, encoding="utf-8").read()
           perms = ('<uses-permission android:name="android.permission.INTERNET"/>\n'
                    '    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>\n'
-                   '    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n    ')
+                   '    <uses-permission android:name="android.permission.WAKE_LOCK"/>\n'
+                   '    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>\n'
+                   '    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32"/>\n    ')
           s = s.replace("<application", perms + "<application", 1)
           s = re.sub(r'android:label="[^"]*"', 'android:label="Dew Player"', s, count=1)
           s = s.replace("<application", '<application android:usesCleartextTraffic="true"', 1)
           open(p, "w", encoding="utf-8").write(s)
 
-          # ML Kit OCR: add the non-Latin script libraries (needed for release builds / R8 too)
-          import os
-          kts = os.path.exists("android/app/build.gradle.kts")
-          g = "android/app/build.gradle.kts" if kts else "android/app/build.gradle"
-          libs = ["chinese", "devanagari", "japanese", "korean"]
-          lines = [('implementation("com.google.mlkit:text-recognition-%s:16.0.1")' if kts
-                    else "implementation 'com.google.mlkit:text-recognition-%s:16.0.1'") % l for l in libs]
-          with open(g, "a", encoding="utf-8") as f:
-              f.write("\ndependencies {\n    " + "\n    ".join(lines) + "\n}\n")
-
-          # Some plugins (e.g. file_picker) still compile against SDK 34 but their deps need 36+.
+          # Some plugins still compile against an old SDK but their deps need 36+.
           # Force every plugin subproject (not the app) to compile against SDK 36.
           root = "android/build.gradle.kts" if os.path.exists("android/build.gradle.kts") else "android/build.gradle"
           if root.endswith(".kts"):
@@ -176,7 +174,7 @@ jobs:
           PY
 
       - name: Install dependencies and icons
-        working-directory: mobile
+        working-directory: app
         run: |
           flutter pub get
           dart run flutter_launcher_icons
@@ -188,13 +186,13 @@ jobs:
           "$SDKM" "ndk;27.0.11902837"
 
       - name: Build APKs (per CPU, small size)
-        working-directory: mobile
+        working-directory: app
         run: |
           flutter build apk --release --split-per-abi --build-name "$APP_VERSION" --build-number "${{ github.run_number }}"
 
       - name: Sign APKs (same key every release, so updates install over the old app)
         run: |
-          KS="$GITHUB_WORKSPACE/mobile/signing/dew-release.jks"
+          KS="$GITHUB_WORKSPACE/app/signing/dew-release.jks"
           PASS="dewplayer-pass"
           ALIAS="dew"
           if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
@@ -202,7 +200,7 @@ jobs:
             KS="$RUNNER_TEMP/release.jks"; PASS="${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"; ALIAS="${{ secrets.ANDROID_KEY_ALIAS }}"
           fi
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
-          cd mobile/build/app/outputs/flutter-apk
+          cd app/build/app/outputs/flutter-apk
           mkdir -p "$GITHUB_WORKSPACE/out"
           for pair in "arm64-v8a:arm64" "armeabi-v7a:armv7"; do
             abi="${pair%%:*}"; name="${pair##*:}"

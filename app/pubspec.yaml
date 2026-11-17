@@ -1,0 +1,45 @@
+name: dew_player
+description: Dew Player - a clean, smooth video player with automatic subtitles in any language.
+publish_to: "none"
+version: 0.2.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  media_kit: ^1.1.11
+  media_kit_video: ^1.2.5
+  media_kit_libs_video: ^1.0.5
+  file_picker: ^8.1.2
+  shared_preferences: ^2.3.2
+  http: ^1.2.2
+  path_provider: ^2.1.4
+  open_filex: ^4.5.0
+  package_info_plus: ^8.0.2
+  device_info_plus: ^10.1.2
+  wakelock_plus: ^1.2.8
+  photo_manager: ^3.6.0
+  screen_brightness: 1.0.1
+  window_manager: ^0.4.3
+  whisper_flutter_new: ^1.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.14.1
+
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon.png"
+  windows:
+    generate: true
+    image_path: "assets/icon.png"
+    icon_size: 256
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon.png
